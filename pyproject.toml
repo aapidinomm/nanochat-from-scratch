@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "datasets>=5.1.0",
+    "einops>=0.8.2",
     "numpy>=2.4.6",
     "pyarrow>=26.0.1",
     "tiktoken>=0.14.0",
