@@ -83,9 +83,6 @@ def test_matches_pytorch_sdpa():
     q = apply_rope(q, cos, sin)
     k = apply_rope(k, cos, sin)
 
-    q = attention.q_norm(q)
-    k = attention.k_norm(k)
-
     # Match the model's qk-norm before computing scores
     q = attention.q_norm(q)
     k = attention.k_norm(k)
@@ -126,3 +123,67 @@ def test_qk_normalization():
             atol=1e-5,
             rtol=1e-5,
         )
+
+def test_gqa_projection_dimensions():
+    attention = CausalSelfAttention(
+        hidden_size=512,
+        num_heads=8,
+        num_kv_heads=2,
+    )
+
+    assert attention.head_dim == 64
+    assert attention.group_size == 4
+
+    assert attention.q_proj.out_features == 512
+    assert attention.k_proj.out_features == 128
+    assert attention.v_proj.out_features == 128
+
+
+import pytest
+
+
+@pytest.mark.parametrize("num_kv_heads", [1, 2, 8])
+def test_gqa_output_and_gradients(num_kv_heads):
+    torch.manual_seed(42)
+
+    attention = CausalSelfAttention(
+        hidden_size=64,
+        num_heads=8,
+        num_kv_heads=num_kv_heads,
+    )
+
+    x = torch.randn(2, 5, 64, requires_grad=True)
+
+    output = attention(x)
+
+    assert output.shape == (2, 5, 64)
+
+    output.square().mean().backward()
+
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
+
+def test_gqa_causal_mask():
+    torch.manual_seed(42)
+
+    attention = CausalSelfAttention(
+        hidden_size=64,
+        num_heads=8,
+        num_kv_heads=2,
+    )
+
+    x = torch.randn(1, 6, 64)
+
+    original = attention(x)
+
+    modified = x.clone()
+    modified[:, 4:, :] += 100
+
+    updated = attention(modified)
+
+    torch.testing.assert_close(
+        original[:, :4, :],
+        updated[:, :4, :],
+        atol=1e-5,
+        rtol=1e-5,
+    )
