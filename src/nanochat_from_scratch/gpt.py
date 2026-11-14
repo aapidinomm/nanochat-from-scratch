@@ -71,7 +71,6 @@ class GPT(nn.Module):
                 rearrange(logits, "b t v -> (b t) v").float(),
                 rearrange(targets, "b t -> (b t)")
             )
-
         return logits, loss
 
         
