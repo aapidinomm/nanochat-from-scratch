@@ -1,5 +1,8 @@
 
 import torch
+import math
+import pytest
+from einops import einsum, repeat
 import torch.nn.functional as F
 from einops import rearrange
 
@@ -139,7 +142,6 @@ def test_gqa_projection_dimensions():
     assert attention.v_proj.out_features == 128
 
 
-import pytest
 
 
 @pytest.mark.parametrize("num_kv_heads", [1, 2, 8])
@@ -187,3 +189,70 @@ def test_gqa_causal_mask():
         atol=1e-5,
         rtol=1e-5,
     )
+
+
+
+
+
+def manual_gqa(q, k, v):
+    group_size = q.shape[1] // k.shape[1]
+
+    k = repeat(
+        k, "b g t d -> b (g r) t d", r=group_size
+    )
+    v = repeat(
+        v, "b g t d -> b (g r) t d", r=group_size
+    )
+
+    scores = einsum(
+        q, k, "b h t d, b h s d -> b h t s"
+    ) / math.sqrt(q.shape[-1])
+
+    T = q.shape[-2]
+    mask = torch.ones(
+        T, T, device=q.device, dtype=torch.bool
+    ).tril()
+
+    scores = scores.masked_fill(~mask, float("-inf"))
+    weights = torch.softmax(scores.float(), dim=-1).to(v.dtype)
+
+    return einsum(
+        weights, v, "b h t s, b h s d -> b h t d"
+    )
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="Native GQA test requires CUDA",
+)
+@pytest.mark.parametrize("kv_heads", [1, 2, 8])
+def test_native_gqa_matches_manual(kv_heads):
+    torch.manual_seed(42)
+
+    q = torch.randn(2, 8, 7, 16, device="cuda", requires_grad=True)
+    k = torch.randn(2, kv_heads, 7, 16, device="cuda", requires_grad=True)
+    v = torch.randn(2, kv_heads, 7, 16, device="cuda", requires_grad=True)
+
+    manual = manual_gqa(q, k, v)
+
+    native = F.scaled_dot_product_attention(
+        q, k, v,
+        is_causal=True,
+        enable_gqa=(kv_heads != 8),
+    )
+
+    torch.testing.assert_close(
+        native, manual, rtol=1e-4, atol=1e-4
+    )
+
+    manual_grads = torch.autograd.grad(
+        manual.square().sum(), (q, k, v)
+    )
+    native_grads = torch.autograd.grad(
+        native.square().sum(), (q, k, v)
+    )
+
+    for actual, expected in zip(native_grads, manual_grads):
+        torch.testing.assert_close(
+            actual, expected, rtol=1e-4, atol=1e-4
+        )

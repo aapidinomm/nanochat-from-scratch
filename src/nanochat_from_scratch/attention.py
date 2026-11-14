@@ -23,6 +23,8 @@ class CausalSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = hidden_size // num_heads
         self.num_kv_heads = (num_kv_heads if num_kv_heads is not None else num_heads)
+        assert 0 < self.num_kv_heads <= self.num_heads
+        assert self.num_heads % self.num_kv_heads == 0
         self.group_size = self.num_heads // self.num_kv_heads
 
         assert self.head_dim % 2 == 0
