@@ -4,6 +4,10 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from nanochat_from_scratch.attention import CausalSelfAttention
+from nanochat_from_scratch.rope import (
+    rotary_cos_sin,
+    apply_rope,
+)
 
 
 def test_attention_shape_and_gradients():
@@ -69,6 +73,23 @@ def test_matches_pytorch_sdpa():
         h=2,
     )
 
+
+    cos, sin = rotary_cos_sin(
+        seq_len=x.shape[1],
+        head_dim=attention.head_dim,
+        device=x.device,
+    )
+
+    q = apply_rope(q, cos, sin)
+    k = apply_rope(k, cos, sin)
+
+    q = attention.q_norm(q)
+    k = attention.k_norm(k)
+
+    # Match the model's qk-norm before computing scores
+    q = attention.q_norm(q)
+    k = attention.k_norm(k)
+
     context = F.scaled_dot_product_attention(
         q, k, v, is_causal=True
     )
@@ -81,3 +102,27 @@ def test_matches_pytorch_sdpa():
     torch.testing.assert_close(
         actual, expected, atol=1e-5, rtol=1e-4
     )
+
+def test_qk_normalization():
+    torch.manual_seed(42)
+
+    attn = CausalSelfAttention(
+        hidden_size=64,
+        num_heads=4,
+    )
+
+    q = torch.randn(2, 4, 8, 16)
+    k = torch.randn(2, 4, 8, 16)
+
+    q_norm = attn.q_norm(q)
+    k_norm = attn.k_norm(k)
+
+    for tensor in [q_norm, k_norm]:
+        rms = tensor.square().mean(dim=-1).sqrt()
+
+        torch.testing.assert_close(
+            rms,
+            torch.ones_like(rms),
+            atol=1e-5,
+            rtol=1e-5,
+        )
