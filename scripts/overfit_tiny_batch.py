@@ -90,6 +90,32 @@ def main():
     print(f"Final loss: {loss.item():.4f}")
     print(f"Final accuracy: {accuracy:.2%}")
 
+    
+    # Autoregressive generation from the first token.
+    model.eval()
+
+    generated = tokens[:1, :1].clone()
+
+    with torch.no_grad():
+        for _ in range(tokens.shape[1] - 1):
+            context = generated[:, -config.max_seq_len:]
+
+            logits, _ = model(context)
+
+            # Greedy decoding: choose the most likely next token.
+            next_token = logits[:, -1, :].argmax(
+                dim=-1, keepdim=True
+            )
+
+            generated = torch.cat(
+                [generated, next_token], dim=1
+            )
+
+    print("Original: ", tokens[0].tolist())
+    print("Generated:", generated[0].tolist())
+    print("Exact match:", torch.equal(generated, tokens[:1]))
+
+
 
 if __name__ == "__main__":
     main()
